@@ -1,0 +1,11 @@
+# Pinned dependencies for the Streamlit Maximo app (backup_Stream_31.py)
+# Install with:
+#   pip install -r Maximo_DEV/requirements.pinned.txt
+# Then install Playwright browser binaries once:
+#   python -m playwright install chromium
+
+streamlit==1.50.0
+pandas==2.3.2
+openpyxl==3.1.5
+cryptography==45.0.7
+playwright==1.55.0
