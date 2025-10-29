@@ -1,11 +1,20 @@
 # Pinned dependencies for the Streamlit Maximo app (backup_Stream_31.py)
-# Install with:
+#
+# Install into your venv:
+#   pip install --upgrade pip setuptools wheel
 #   pip install -r Maximo_DEV/requirements.pinned.txt
 # Then install Playwright browser binaries once:
 #   python -m playwright install chromium
 
+# Core app deps
 streamlit==1.50.0
 pandas==2.3.2
 openpyxl==3.1.5
 cryptography==45.0.7
 playwright==1.55.0
+
+# Optional extras used elsewhere in the repo (not required for backup_Stream_31.py)
+# plotly==5.18.0
+# requests==2.32.3
+# streamlit-autorefresh==1.0.0
+
