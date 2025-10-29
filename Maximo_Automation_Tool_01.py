@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Optional
 from cryptography.fernet import Fernet
 import asyncio
+import subprocess
 
 # Ensure Windows event loop supports subprocess in threads (needed by Playwright)
 if sys.platform.startswith("win"):
@@ -2190,9 +2191,24 @@ def setup_browser(show_browser: bool):
         return None, None, None, None
     try:
         playwright = _sync_playwright().start()
-        headed = bool(show_browser)
+        # Determine if environment can show a browser window (Streamlit Cloud is headless)
+        server_headless = os.environ.get("STREAMLIT_SERVER_HEADLESS", "true").lower() == "true"
+        no_display = (sys.platform != "win32" and not os.environ.get("DISPLAY"))
+        is_headless_env = server_headless or no_display
+        headed = bool(show_browser) and not is_headless_env
         logging.getLogger("MaximoAutomation").info(f"Launching Chromium (headed={headed})")
-        browser = playwright.chromium.launch(headless=not headed)
+        try:
+            browser = playwright.chromium.launch(headless=not headed)
+        except Exception as launch_err:
+            # Attempt one-time install of Chromium if missing, then retry once
+            msg = str(launch_err)
+            logging.getLogger("MaximoAutomation").warning(f"Chromium launch failed, attempting install: {msg}")
+            try:
+                subprocess.run([sys.executable, "-m", "playwright", "install", "chromium"], check=False)
+            except Exception:
+                pass
+            # retry
+            browser = playwright.chromium.launch(headless=not headed)
         context = browser.new_context(
             viewport={'width': 1920, 'height': 1080},
             ignore_https_errors=True,
