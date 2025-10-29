@@ -13,6 +13,14 @@ import random
 from pathlib import Path
 from typing import Optional
 from cryptography.fernet import Fernet
+import asyncio
+
+# Ensure Windows event loop supports subprocess in threads (needed by Playwright)
+if sys.platform.startswith("win"):
+    try:
+        asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
+    except Exception:
+        pass
 
 # Optional Playwright imports (guarded)
 try:
@@ -148,10 +156,15 @@ LOG_DIR.mkdir(parents=True, exist_ok=True)
 # -----------------------
 class InMemoryLogHandler(logging.Handler):
     def emit(self, record):
-        msg = self.format(record)
-        logs = st.session_state.get("logs", [])
-        logs.append(msg)
-        st.session_state["logs"] = logs
+        try:
+            msg = self.format(record)
+            logs = st.session_state.get("logs", [])
+            logs.append(msg)
+            st.session_state["logs"] = logs
+        except Exception:
+            # When logging from background threads without Streamlit context
+            # just drop in-memory UI logs to avoid ScriptRunContext warnings
+            pass
 
 def setup_logger():
     logger = logging.getLogger("MaximoAutomation")
@@ -326,30 +339,49 @@ def enable_controls():
 # Automation adapter (preserve original function names/logic)
 # -----------------------
 class VarProxy:
-    def __init__(self, key: str):
+    def __init__(self, key: str, fallback=None):
         self.key = key
+        self.fallback = fallback
     def get(self):
-        return st.session_state.get(self.key)
+        try:
+            return st.session_state.get(self.key, self.fallback)
+        except Exception:
+            # Accessing session_state from a non-Streamlit thread can raise; use fallback
+            return self.fallback
     def set(self, value):
-        st.session_state[self.key] = value
+        try:
+            st.session_state[self.key] = value
+        except Exception:
+            # If not in Streamlit context, at least keep the latest value locally
+            self.fallback = value
 
 class StreamlitAutomation:
     """Adapter class to host original automation methods with minimal changes."""
-    def __init__(self):
-        # Proxies to mimic Tkinter StringVar/BooleanVar
-        self.url_var = VarProxy("url")
-        self.username_var = VarProxy("username")
-        self.password_var = VarProxy("password")
-        self.show_browser_var = VarProxy("show_browser")
-        self.remember_var = VarProxy("remember")
+    def __init__(self,
+                 url: Optional[str] = None,
+                 username: Optional[str] = None,
+                 password: Optional[str] = None,
+                 show_browser: Optional[bool] = True,
+                 remember: Optional[bool] = False,
+                 stop_event: Optional[threading.Event] = None,
+                 paused: bool = False,
+                 excel_path: Optional[str] = None,
+                 working_excel_path: Optional[str] = None,
+                 excel_cache=None):
+        # Proxies to mimic Tkinter StringVar/BooleanVar with thread-safe fallbacks
+        self.url_var = VarProxy("url", fallback=url)
+        self.username_var = VarProxy("username", fallback=username)
+        self.password_var = VarProxy("password", fallback=password)
+        self.show_browser_var = VarProxy("show_browser", fallback=show_browser)
+        self.remember_var = VarProxy("remember", fallback=remember)
 
-        # State fields expected by original code
+        # State fields expected by original code (avoid session_state in threads)
         self.logger = logging.getLogger("MaximoAutomation")
-        self.stop_event = st.session_state.get("stop_event") or threading.Event()
-        self.paused = st.session_state.get("paused", False)
-        self.excel_path = st.session_state.get("excel_path")
-        self.working_excel_path = st.session_state.get("working_excel_path")
-        self._excel_file_cache = st.session_state.get("excel_cache")
+        self.stop_event = stop_event or threading.Event()
+        self.paused = paused
+        self.excel_path = excel_path
+        self.working_excel_path = working_excel_path or excel_path
+        self._excel_file_cache = excel_cache
 
         # Placeholders for Playwright
         self.playwright = None
@@ -2241,8 +2273,18 @@ def run_automation(params=None):
         append_log(f"📂 Opening Excel file for processing: {Path(excel_path).name}")
 
         # Create automation adapter and bind optional cache/state
-        automation = StreamlitAutomation()
-        automation._excel_file_cache = None
+        automation = StreamlitAutomation(
+            url=url,
+            username=username,
+            password=password,
+            show_browser=True,
+            remember=False,
+            stop_event=stop_event,
+            paused=False,
+            excel_path=excel_path,
+            working_excel_path=excel_path,
+            excel_cache=None,
+        )
 
         # Early stop check
         if stop_event and stop_event.is_set():
